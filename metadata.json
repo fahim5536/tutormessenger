@@ -1,0 +1,6 @@
+{
+  "name": "TutorMessenger",
+  "description": "A secure full-stack private communication and homework platform for tutors and students inspired by messenger.com.",
+  "requestFramePermissions": ["camera", "microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

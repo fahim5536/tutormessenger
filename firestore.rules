@@ -1,0 +1,89 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    
+    // Helper functions
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    function isOwner(userId) {
+      return request.auth.uid == userId;
+    }
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    function isParticipant(participants) {
+      return request.auth.uid in participants;
+    }
+    function isTutorOfClass(classData) {
+      return classData.tutorId == request.auth.uid;
+    }
+    function isMemberOfClass(classData) {
+      return request.auth.uid in classData.memberIds;
+    }
+
+    // 1. Users collection
+    match /users/{userId} {
+      allow read: if isAuthenticated();
+      allow create: if isAuthenticated() && isOwner(userId)
+                    && (request.resource.data.role == 'student' || request.resource.data.role == 'tutor')
+                    && request.resource.data.keys().hasAll(['firstName', 'lastName', 'email', 'role', 'createdAt', 'updatedAt']);
+      allow update: if isAuthenticated() && isOwner(userId) 
+                    && request.resource.data.role == resource.data.role // Cannot change role
+                    && request.resource.data.email == resource.data.email // Cannot change email
+                    && (!('studentId' in request.resource.data) || request.resource.data.studentId == resource.data.studentId); // Cannot change studentId
+    }
+    
+    // 2. Conversations collection (DM and Group Chats)
+    match /conversations/{conversationId} {
+      allow read: if isAuthenticated() && isParticipant(resource.data.participants);
+      allow create: if isAuthenticated() && isParticipant(request.resource.data.participants);
+      allow update: if isAuthenticated() && isParticipant(resource.data.participants);
+      
+      // 3. Messages subcollection
+      match /messages/{messageId} {
+        allow read: if isAuthenticated() && isParticipant(get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants);
+        allow create: if isAuthenticated() && isParticipant(get(/databases/$(database)/documents/conversations/$(conversationId)).data.participants) && request.resource.data.senderId == request.auth.uid;
+        allow update, delete: if isAuthenticated() && resource.data.senderId == request.auth.uid;
+      }
+    }
+    
+    // 5. Classes collection
+    match /classes/{classId} {
+      allow read: if isAuthenticated() && (isMemberOfClass(resource.data) || isTutorOfClass(resource.data) || getUserRole() == 'admin');
+      allow create: if isAuthenticated() && getUserRole() == 'tutor';
+      allow update, delete: if isAuthenticated() && (isTutorOfClass(resource.data) || getUserRole() == 'admin');
+      
+      // 6. Homework subcollection
+      match /homeworks/{homeworkId} {
+        allow read: if isAuthenticated() && (isMemberOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || getUserRole() == 'admin');
+        allow create, update, delete: if isAuthenticated() && isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data);
+        
+        // Homework submissions
+        match /submissions/{submissionId} {
+          allow read: if isAuthenticated() && (isOwner(resource.data.studentId) || isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || getUserRole() == 'admin');
+          allow create: if isAuthenticated() && request.resource.data.studentId == request.auth.uid;
+          allow update: if isAuthenticated() && (isOwner(resource.data.studentId) || isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data));
+        }
+      }
+
+      // 7. Announcements / Notices subcollection
+      match /announcements/{announcementId} {
+        allow read: if isAuthenticated() && (isMemberOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || getUserRole() == 'admin');
+        allow create, update, delete: if isAuthenticated() && isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data);
+      }
+
+      // 8. Attendance subcollection
+      match /attendance/{attendanceId} {
+        allow read: if isAuthenticated() && (isMemberOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data) || getUserRole() == 'admin');
+        allow create, update, delete: if isAuthenticated() && isTutorOfClass(get(/databases/$(database)/documents/classes/$(classId)).data);
+      }
+    }
+    
+    // 9. Notifications collection
+    match /notifications/{notificationId} {
+      allow read, update, delete: if isAuthenticated() && resource.data.targetUserId == request.auth.uid;
+      allow create: if isAuthenticated();
+    }
+  }
+}
